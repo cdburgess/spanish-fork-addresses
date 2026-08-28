@@ -3,6 +3,7 @@
   "exclude": [
     "vendor",
     "database",
+    "bin",
     "tests/Fixtures"
   ]
 }
