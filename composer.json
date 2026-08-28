@@ -1,0 +1,41 @@
+{
+    "name": "cdburgess/spanish-fork-addresses",
+    "description": "Validate addresses against City of Spanish Fork GIS address points",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.2",
+        "cdburgess/addressing-standards": "*",
+        "illuminate/support": "^10.0|^11.0|^12.0",
+        "ext-pdo": "*"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^8.0|^9.0|^10.0",
+        "pestphp/pest": "^2.0|^3.0",
+        "pestphp/pest-plugin-laravel": "^2.0|^3.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Cdburgess\\SpanishForkAddresses\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Cdburgess\\SpanishForkAddresses\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Cdburgess\\SpanishForkAddresses\\SpanishForkAddressesServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    }
+}
