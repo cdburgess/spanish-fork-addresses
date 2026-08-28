@@ -24,6 +24,7 @@ class ImportAddressPointsCommand extends Command
             $imported = $importer->import($dbf, $database);
         } catch (\Throwable $exception) {
             $this->error($exception->getMessage());
+
             return self::FAILURE;
         }
 

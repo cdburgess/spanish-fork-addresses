@@ -1,1 +1,4 @@
-/vendor
+/vendor/
+/database/*.sqlite
+.phpunit.result.cache
+.phpunit.cache

@@ -43,14 +43,30 @@ class SpanishForkValidator implements AddressValidator
         }
 
         $best = array_shift($candidates);
+        $second = $candidates[0] ?? null;
+
+        $sameStreet = $second
+            && ($second['row']['street_name_key'] ?? '') === ($best['row']['street_name_key'] ?? '')
+            && ($second['row']['house_number'] ?? '') === ($best['row']['house_number'] ?? '');
+
+        $ambiguous = $second
+            && ! $sameStreet
+            && ($best['score'] - $second['score']) < 10;
+
+        $matched = ! $ambiguous && $best['score'] >= 70;
 
         return new ValidationResult(
-            matched: $best['score'] >= 70,
-            address: $this->applyMatch($address, $best['row']),
+            matched: $matched,
+            address: $matched ? $this->applyMatch($address, $best['row']) : $address,
             confidence: $best['score'] / 100,
             record: $best['row'],
-            alternatives: array_map(fn ($item) => $item['row'], $candidates),
-            message: $best['score'] >= 70 ? 'Matched Spanish Fork GIS record.' : 'Possible GIS match found.',
+            alternatives: array_map(
+                fn ($item) => $item['row'],
+                $matched ? $candidates : array_merge([$best], $candidates)
+            ),
+            message: $ambiguous
+                ? 'Multiple Spanish Fork GIS records are close matches.'
+                : ($matched ? 'Matched Spanish Fork GIS record.' : 'Possible GIS match found.'),
         );
     }
 
@@ -59,16 +75,27 @@ class SpanishForkValidator implements AddressValidator
      */
     protected function candidates(Address $address): array
     {
-        $pdo = new PDO('sqlite:' . $this->databasePath);
+        $pdo = new PDO('sqlite:'.$this->databasePath);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+
+        $inputNameKey = StreetKey::compact(
+            $address->streetName,
+            $address->postDirectional,
+            $address->suffix
+        );
 
         $inputKey = StreetKey::compact(
             $address->preDirectional,
             $address->streetName,
+            $address->postDirectional,
             $address->suffix
         );
-        $inputLoose = StreetKey::loose($address->streetName, $address->suffix);
+
+        $inputLoose = StreetKey::loose(
+            trim(($address->streetName ?? '').' '.($address->postDirectional ?? '')),
+            $address->suffix
+        );
 
         $sql = 'SELECT * FROM addresses WHERE 1=1';
         $bindings = [];
@@ -82,29 +109,31 @@ class SpanishForkValidator implements AddressValidator
         $statement->execute($bindings);
         $rows = $statement->fetchAll();
 
-        if ($rows === [] && $inputLoose !== '') {
-            $statement = $pdo->prepare('SELECT * FROM addresses WHERE street_key_loose = :loose LIMIT 25');
-            $statement->execute(['loose' => $inputLoose]);
-            $rows = $statement->fetchAll();
-        }
-
         $scored = [];
 
         foreach ($rows as $row) {
-            $score = 0;
+            $rowNameKey = $row['street_name_key'] ?: StreetKey::compact($row['street_name'] ?? '');
+            $rowKey = $row['street_key'] ?: StreetKey::compact(
+                $row['pre_directional'] ?? '',
+                $row['street_name'] ?? ''
+            );
+
+            $score = 0.0;
 
             if ($address->primaryNumber && $row['house_number'] === $address->primaryNumber) {
                 $score += 40;
             }
 
-            if ($inputKey !== '' && $row['street_key'] === $inputKey) {
+            if ($inputNameKey !== '' && $rowNameKey === $inputNameKey) {
+                $score += 50;
+            } elseif ($inputKey !== '' && $rowKey === $inputKey) {
                 $score += 50;
             } else {
-                similar_text($inputKey, (string) $row['street_key'], $percent);
+                similar_text($inputNameKey, $rowNameKey, $percent);
                 $score += min(50, $percent * 0.5);
             }
 
-            if ($inputLoose !== '' && $row['street_key_loose'] === $inputLoose) {
+            if ($inputLoose !== '' && ($row['street_key_loose'] ?? '') === $inputLoose) {
                 $score += 10;
             }
 
@@ -121,11 +150,21 @@ class SpanishForkValidator implements AddressValidator
 
     protected function applyMatch(Address $address, array $row): Address
     {
+        $streetName = $row['street_name'] ?: $address->streetName;
+        $postDirectional = $address->postDirectional;
+        $preDirectional = $row['pre_directional'] ?: $address->preDirectional;
+
+        if ($streetName && preg_match('/^(.*)\s+(N|S|E|W|NE|NW|SE|SW)$/', $streetName, $match)) {
+            $streetName = $match[1];
+            $postDirectional = $match[2];
+        }
+
         return $address->with([
             'primaryNumber' => $row['house_number'] ?: $address->primaryNumber,
-            'preDirectional' => $row['pre_directional'] ?: $address->preDirectional,
-            'streetName' => $row['street_name'] ?: $address->streetName,
+            'preDirectional' => $preDirectional,
+            'streetName' => $streetName,
             'suffix' => $row['suffix'] ?: $address->suffix,
+            'postDirectional' => $postDirectional,
             'secondaryNumber' => $row['secondary_number'] ?: $address->secondaryNumber,
             'city' => $address->city ?: 'SPANISH FORK',
             'state' => $address->state ?: 'UT',

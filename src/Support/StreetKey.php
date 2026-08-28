@@ -14,7 +14,7 @@ class StreetKey
 
     public static function loose(?string $streetName, ?string $suffix = null): string
     {
-        $value = strtoupper(trim(($streetName ?? '') . ' ' . ($suffix ?? '')));
+        $value = strtoupper(trim(($streetName ?? '').' '.($suffix ?? '')));
         $value = preg_replace('/\b(N|S|E|W|NE|NW|SE|SW|NORTH|SOUTH|EAST|WEST)\b/', '', $value) ?? '';
 
         return self::compact($value);

@@ -5,14 +5,16 @@
     "license": "MIT",
     "require": {
         "php": "^8.2",
-        "cdburgess/addressing-standards": "*",
+        "cdburgess/addressing-standards": "^1.0",
         "illuminate/support": "^10.0|^11.0|^12.0",
         "ext-pdo": "*"
     },
     "require-dev": {
         "orchestra/testbench": "^8.0|^9.0|^10.0",
-        "pestphp/pest": "^2.0|^3.0",
-        "pestphp/pest-plugin-laravel": "^2.0|^3.0"
+        "pestphp/pest": "^3.0",
+        "pestphp/pest-plugin-laravel": "^2.0|^3.0",
+        "laravel/pint": "^1.30",
+        "phpunit/phpunit": "^11.0"
     },
     "autoload": {
         "psr-4": {
@@ -23,6 +25,11 @@
         "psr-4": {
             "Cdburgess\\SpanishForkAddresses\\Tests\\": "tests/"
         }
+    },
+    "scripts": {
+        "test": "vendor/bin/pest",
+        "lint": "vendor/bin/pint --test",
+        "lint:fix": "vendor/bin/pint"
     },
     "extra": {
         "laravel": {

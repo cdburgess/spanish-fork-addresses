@@ -3,7 +3,7 @@
 use Cdburgess\AddressingStandards\Address;
 use Cdburgess\SpanishForkAddresses\SpanishForkValidator;
 
-$db = dirname(__DIR__, 2) . '/database/spanish-fork-addresses.sqlite';
+$db = dirname(__DIR__, 2).'/database/spanish-fork-addresses.sqlite';
 
 it('matches 814 W PARK DR to the city West Park record', function () use ($db) {
     $validator = new SpanishForkValidator($db);
@@ -20,7 +20,7 @@ it('matches 814 W PARK DR to the city West Park record', function () use ($db) {
     $result = $validator->validate($address);
 
     expect($result->matched())->toBeTrue();
-    expect($result->address()->streetName)->toContain('PARK');
+    expect($result->address()->streetName)->toContain('WEST PARK');
     expect($result->address()->primaryNumber)->toBe('814');
 })->skip(
     fn () => ! file_exists($db),
@@ -53,7 +53,7 @@ it('validates 814 westpark drive against Spanish Fork GIS', function () use ($db
 it('rejects an address with no delivery information', function () {
     $validator = new SpanishForkValidator('/tmp/missing.sqlite');
 
-    $validator->validate(new Address());
+    $validator->validate(new Address);
 })->throws(InvalidArgumentException::class);
 
 it('returns unmatched when the gazetteer file is missing', function () {
@@ -74,3 +74,23 @@ it('returns unmatched when the gazetteer file is missing', function () {
     expect($result->address())->toBe($address);
     expect($result->message())->toContain('not found');
 });
+
+it('validates 80 south 800 east', function () {
+    $db = dirname(__DIR__, 2).'/database/spanish-fork-addresses.sqlite';
+    $validator = new SpanishForkValidator($db);
+
+    $address = Address::normalize([
+        'street_line' => '80 south 800 east',
+        'city' => 'Spanish Fork',
+        'state' => 'UT',
+    ]);
+
+    $result = $validator->validate($address);
+
+    expect($result->matched())->toBeTrue();
+    expect($result->address()->primaryNumber)->toBe('80');
+    expect($result->address()->preDirectional)->toBe('S');
+    expect($result->address()->deliveryAddressLine())->toBe('80 S 800 E');
+})->skip(
+    fn () => ! file_exists(dirname(__DIR__, 2).'/database/spanish-fork-addresses.sqlite')
+);

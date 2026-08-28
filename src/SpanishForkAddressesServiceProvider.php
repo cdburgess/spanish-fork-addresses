@@ -2,6 +2,7 @@
 
 namespace Cdburgess\SpanishForkAddresses;
 
+use Cdburgess\SpanishForkAddresses\Console\ImportAddressPointsCommand;
 use Cdburgess\SpanishForkAddresses\Contracts\AddressValidator;
 use Illuminate\Support\ServiceProvider;
 
@@ -10,13 +11,13 @@ class SpanishForkAddressesServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->mergeConfigFrom(
-            __DIR__ . '/../config/spanish-fork-addresses.php',
+            __DIR__.'/../config/spanish-fork-addresses.php',
             'spanish-fork-addresses'
         );
 
         $this->app->singleton(AddressValidator::class, function ($app) {
             $configured = $app['config']->get('spanish-fork-addresses.database');
-            $fallback = __DIR__ . '/../database/spanish-fork-addresses.sqlite';
+            $fallback = __DIR__.'/../database/spanish-fork-addresses.sqlite';
 
             $path = (is_string($configured) && file_exists($configured))
                 ? $configured
@@ -30,13 +31,13 @@ class SpanishForkAddressesServiceProvider extends ServiceProvider
     {
         if ($this->app->runningInConsole()) {
             $this->commands([
-                \Cdburgess\SpanishForkAddresses\Console\ImportAddressPointsCommand::class,
+                ImportAddressPointsCommand::class,
             ]);
             $this->publishes([
-                __DIR__ . '/../config/spanish-fork-addresses.php' => config_path('spanish-fork-addresses.php'),
+                __DIR__.'/../config/spanish-fork-addresses.php' => config_path('spanish-fork-addresses.php'),
             ], 'spanish-fork-addresses-config');
 
-            $database = __DIR__ . '/../database/spanish-fork-addresses.sqlite';
+            $database = __DIR__.'/../database/spanish-fork-addresses.sqlite';
 
             if (file_exists($database)) {
                 $this->publishes([
