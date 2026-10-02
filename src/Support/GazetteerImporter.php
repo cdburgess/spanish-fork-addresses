@@ -8,11 +8,12 @@ use PDO;
 
 class GazetteerImporter
 {
-    public function import(string $dbfPath, string $databasePath): int
+    public function import(string $csvPath, string $databasePath): int
     {
-        if (! is_readable($dbfPath)) {
-            throw new InvalidArgumentException("DBF file is not readable: {$dbfPath}");
-        }
+        $reader = new CsvReader($csvPath, [
+            'Address System', 'Full Address', 'Address Number',
+            'Prefix Direction', 'Street Name', 'Street Type', 'Suffix Direction',
+        ]);
 
         $directory = dirname($databasePath);
         if (! is_dir($directory) && ! mkdir($directory, 0755, true) && ! is_dir($directory)) {
@@ -22,10 +23,12 @@ class GazetteerImporter
         $pdo = new PDO('sqlite:'.$databasePath);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-        $this->createSchema($pdo);
-        $pdo->exec('DELETE FROM addresses');
+        $pdo->beginTransaction();
 
-        $insert = $pdo->prepare('
+        try {
+            $this->createSchema($pdo);
+
+            $insert = $pdo->prepare('
             INSERT INTO addresses (
                 house_number, pre_directional, street_name, suffix,
                 secondary_number, full_address, street_key, street_key_loose,
@@ -37,44 +40,56 @@ class GazetteerImporter
             )
         ');
 
-        $imported = 0;
-        $pdo->beginTransaction();
+            $imported = 0;
 
-        foreach ((new DbfReader($dbfPath))->records() as $row) {
-            $full = trim((string) ($row['FullAddres'] ?? ''));
-            $street = trim((string) ($row['StreetName'] ?? ''));
-            $label = trim((string) ($row['LabelAddre'] ?? ''));
+            foreach ($reader->records() as $row) {
+                if (strtoupper($row['Address System']) !== 'SPANISH FORK') {
+                    continue;
+                }
 
-            if ($full === '' && $street === '') {
-                continue;
+                $full = strtoupper($row['Full Address']);
+                $street = strtoupper($row['Street Name']);
+
+                if ($full === '' && $street === '') {
+                    continue;
+                }
+
+                $number = strtoupper($row['Address Number'].($row['Address Number Suffix'] ?? ''));
+                $pre = strtoupper($row['Prefix Direction']);
+                $post = strtoupper($row['Suffix Direction']);
+                $streetName = trim($street.' '.$post);
+                $type = strtoupper($row['Street Type']);
+                $suffix = StreetSuffixes::standardize($type) ?: ($type !== '' ? $type : null);
+                [$latitude, $longitude] = $this->coordinates($row);
+
+                $insert->execute([
+                    'house_number' => $number !== '' ? $number : null,
+                    'pre_directional' => $pre !== '' ? $pre : null,
+                    'street_name' => $streetName !== '' ? $streetName : null,
+                    'suffix' => $suffix,
+                    'secondary_number' => ($row['Unit ID'] ?? '') !== '' ? strtoupper($row['Unit ID']) : null,
+                    'full_address' => $full !== '' ? $full : null,
+                    'street_key' => StreetKey::compact($pre, $streetName, $suffix),
+                    'street_key_loose' => StreetKey::loose($streetName, $suffix),
+                    'street_name_key' => StreetKey::compact($streetName, $suffix),
+                    'latitude' => $latitude,
+                    'longitude' => $longitude,
+                    'location_id' => ($row['Utah Address Point ID'] ?? '') !== '' ? $row['Utah Address Point ID'] : null,
+                    'is_built' => ($row['Structure'] ?? '') !== '' ? $row['Structure'] : null,
+                    'address_type' => ($row['Point Type'] ?? '') !== '' ? $row['Point Type'] : null,
+                ]);
+
+                $imported++;
             }
 
-            [$streetName, $suffix] = $this->splitStreetName($street);
-            [$number, $pre, $secondary] = $this->parseLabel($label);
+            $pdo->commit();
 
-            $insert->execute([
-                'house_number' => $number,
-                'pre_directional' => $pre,
-                'street_name' => $streetName,
-                'suffix' => $suffix,
-                'secondary_number' => $secondary,
-                'full_address' => $full !== '' ? strtoupper($full) : null,
-                'street_key' => StreetKey::compact($pre, $streetName, $suffix),
-                'street_key_loose' => StreetKey::loose($streetName, $suffix),
-                'street_name_key' => StreetKey::compact($streetName, $suffix),
-                'latitude' => $this->toFloat($row['WGS84_Lat'] ?? null),
-                'longitude' => $this->toFloat($row['WGS84_Long'] ?? null),
-                'location_id' => ($row['LocationID'] ?? '') !== '' ? $row['LocationID'] : null,
-                'is_built' => ($row['IsBuilt'] ?? '') !== '' ? $row['IsBuilt'] : null,
-                'address_type' => ($row['AddressTyp'] ?? '') !== '' ? $row['AddressTyp'] : null,
-            ]);
-
-            $imported++;
+            return $imported;
+        } finally {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
         }
-
-        $pdo->commit();
-
-        return $imported;
     }
 
     protected function createSchema(PDO $pdo): void
@@ -107,55 +122,26 @@ class GazetteerImporter
     }
 
     /**
-     * Official GIS street names keep words like WEST/PARK.
-     * Only the trailing suffix is split off.
-     *
-     * @return array{0: ?string, 1: ?string}
+     * @return array{0: ?float, 1: ?float}
      */
-    protected function splitStreetName(string $street): array
+    protected function coordinates(array $row): array
     {
-        $street = strtoupper(trim($street));
+        foreach (['x', 'y'] as $field) {
+            $value = $row[$field] ?? '';
 
-        if ($street === '') {
-            return [null, null];
+            if ($value !== '' && (! is_numeric($value) || ! is_finite((float) $value))) {
+                throw new InvalidArgumentException("Invalid CSV {$field} coordinate for address: {$row['Full Address']}");
+            }
         }
 
-        $tokens = preg_split('/\s+/', $street) ?: [];
-        $suffix = StreetSuffixes::standardize((string) end($tokens));
+        // Inverse EPSG:3857 projection using the WGS84 equatorial radius.
+        $latitude = ($row['y'] ?? '') !== ''
+            ? rad2deg(atan(sinh((float) $row['y'] / 6378137)))
+            : null;
+        $longitude = ($row['x'] ?? '') !== ''
+            ? rad2deg((float) $row['x'] / 6378137)
+            : null;
 
-        if ($suffix && count($tokens) > 1) {
-            array_pop($tokens);
-
-            return [implode(' ', $tokens), $suffix];
-        }
-
-        return [$street, null];
-    }
-
-    /**
-     * @return array{0: ?string, 1: ?string, 2: ?string}
-     */
-    protected function parseLabel(string $label): array
-    {
-        $label = strtoupper(trim($label));
-
-        if (preg_match('/^(\d+[A-Z]?)\s*([NSEW]{1,2})?(?:\s*#\s*([A-Z0-9\-]+))?$/', $label, $match)) {
-            return [
-                $match[1] ?? null,
-                ($match[2] ?? '') !== '' ? $match[2] : null,
-                ($match[3] ?? '') !== '' ? $match[3] : null,
-            ];
-        }
-
-        return [null, null, null];
-    }
-
-    protected function toFloat(mixed $value): ?float
-    {
-        if ($value === null || $value === '') {
-            return null;
-        }
-
-        return (float) $value;
+        return [$latitude, $longitude];
     }
 }

@@ -2,3 +2,6 @@
 /database/*.sqlite
 .phpunit.result.cache
 .phpunit.cache
+src/.DS_Store
+.idea/*
+.DS_Store

@@ -8,20 +8,20 @@ use Illuminate\Console\Command;
 class ImportAddressPointsCommand extends Command
 {
     protected $signature = 'spanish-fork:import
-        {dbf : Path to AddressPoints.dbf}
+        {csv : Path to the Utah address points CSV}
         {--database= : Output SQLite path}';
 
-    protected $description = 'Import Spanish Fork AddressPoints DBF into the gazetteer SQLite database';
+    protected $description = 'Import Spanish Fork address-system CSV records into the gazetteer SQLite database';
 
     public function handle(GazetteerImporter $importer): int
     {
-        $dbf = $this->argument('dbf');
+        $csv = $this->argument('csv');
         $database = $this->option('database')
             ?: config('spanish-fork-addresses.database')
                 ?: database_path('spanish-fork-addresses.sqlite');
 
         try {
-            $imported = $importer->import($dbf, $database);
+            $imported = $importer->import($csv, $database);
         } catch (\Throwable $exception) {
             $this->error($exception->getMessage());
 

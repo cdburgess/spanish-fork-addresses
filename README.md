@@ -26,19 +26,33 @@ php artisan vendor:publish --tag=spanish-fork-addresses-db
 
 ## Build the gazetteer
 
-The city shapefile / DBF is not shipped in the repository. From the package root:
+Use a Utah address points CSV export (not shipped with the package). From the package root:
 
 ```bash
-php bin/import-address-points.php /path/to/AddressPoints.dbf database/spanish-fork-addresses.sqlite
+php bin/import-address-points.php /path/to/UtahAddressPoints.csv database/spanish-fork-addresses.sqlite
 ```
 
 In a Laravel app after the package is installed:
 
 ```bash
-php artisan spanish-fork:import /path/to/AddressPoints.dbf
+php artisan spanish-fork:import /path/to/UtahAddressPoints.csv
 ```
 
-When Spanish Fork sends a new `AddressPoints.dbf`, rerun the same command. You do not need a code change unless the GIS field names change.
+Only rows whose `Address System` is `SPANISH FORK` are imported (case-insensitive, ignoring surrounding whitespace). The `City` field is not used for filtering. DBF import is no longer supported.
+
+For the CSV in this checkout:
+
+```bash
+php bin/import-address-points.php UtahAddressPoints_2778281154463100711.csv database/spanish-fork-addresses.sqlite
+```
+
+Required headers are `Address System`, `Full Address`, `Address Number`, `Prefix Direction`, `Street Name`, `Street Type`, and `Suffix Direction`. The reader supports UTF-8 BOMs and quoted CSV fields. Rows with neither a full address nor a street name are skipped.
+
+Address components are imported directly, including optional `Address Number Suffix` and `Unit ID`. Optional `Utah Address Point ID`, `Structure`, and `Point Type` populate `location_id`, `is_built`, and `address_type`; missing metadata remains null. Optional `x`/`y` coordinates must be EPSG:3857 (Web Mercator) and are converted to longitude/latitude.
+
+When a new CSV export is available, rerun the same command. Each successful import replaces the gazetteer; a failed import preserves the existing database. You do not need a code change unless the CSV headers change.
+
+You can get Utah GIS data from: https://opendata.gis.utah.gov/ 
 
 ## Usage
 

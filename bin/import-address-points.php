@@ -15,16 +15,16 @@ if (! file_exists($autoload)) {
 
 require $autoload;
 
-$dbf = $argv[1] ?? null;
+$csv = $argv[1] ?? null;
 $database = $argv[2] ?? $root.'/database/spanish-fork-addresses.sqlite';
 
-if ($dbf === null || $dbf === '-h' || $dbf === '--help') {
-    fwrite(STDOUT, "Usage: php bin/import-address-points.php /path/to/AddressPoints.dbf [output.sqlite]\n");
-    exit($dbf === null ? 1 : 0);
+if ($csv === null || $csv === '-h' || $csv === '--help') {
+    fwrite(STDOUT, "Usage: php bin/import-address-points.php /path/to/UtahAddressPoints.csv [output.sqlite]\n");
+    exit($csv === null ? 1 : 0);
 }
 
 try {
-    $imported = new GazetteerImporter()->import($dbf, $database);
+    $imported = (new GazetteerImporter)->import($csv, $database);
     fwrite(STDOUT, "Imported {$imported} addresses into {$database}\n");
     exit(0);
 } catch (Throwable $exception) {
