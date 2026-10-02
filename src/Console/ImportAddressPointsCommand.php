@@ -8,27 +8,22 @@ use Illuminate\Console\Command;
 class ImportAddressPointsCommand extends Command
 {
     protected $signature = 'spanish-fork:import
-        {csv : Path to the Utah address points CSV}
-        {--database= : Output SQLite path}';
+        {csv : Path to the Utah address points CSV}';
 
-    protected $description = 'Import Spanish Fork address-system CSV records into the gazetteer SQLite database';
+    protected $description = 'Import Spanish Fork address-system CSV records into gis_addresses on the application database';
 
     public function handle(GazetteerImporter $importer): int
     {
         $csv = $this->argument('csv');
-        $database = $this->option('database')
-            ?: config('spanish-fork-addresses.database')
-                ?: database_path('spanish-fork-addresses.sqlite');
-
         try {
-            $imported = $importer->import($csv, $database);
+            $imported = $importer->import($csv);
         } catch (\Throwable $exception) {
             $this->error($exception->getMessage());
 
             return self::FAILURE;
         }
 
-        $this->info("Imported {$imported} addresses into {$database}");
+        $this->info("Imported {$imported} addresses into gis_addresses");
 
         return self::SUCCESS;
     }

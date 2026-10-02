@@ -1,15 +1,17 @@
 <?php
 
 use Cdburgess\AddressingStandards\Address;
+use Cdburgess\SpanishForkAddresses\Contracts\AddressValidator;
 use Cdburgess\SpanishForkAddresses\SpanishForkValidator;
+use Cdburgess\SpanishForkAddresses\Tests\Support\AddressPointsCsv;
 
-$db = dirname(__DIR__, 2).'/database/spanish-fork-addresses.sqlite';
+beforeEach(function () {
+    AddressPointsCsv::import([AddressPointsCsv::row()]);
+});
 
 function spanishForkValidator(): SpanishForkValidator
 {
-    $db = dirname(__DIR__, 2).'/database/spanish-fork-addresses.sqlite';
-
-    return new SpanishForkValidator($db);
+    return app(AddressValidator::class);
 }
 
 function normalizeSpanishFork(string $streetLine): Address
@@ -28,7 +30,7 @@ it('validates 814 westpark drive', function () {
 
     expect($result->matched())->toBeTrue();
     expect($result->address()->deliveryAddressLine())->toBe('814 S WEST PARK DR');
-})->skip(fn () => ! file_exists(dirname(__DIR__, 2).'/database/spanish-fork-addresses.sqlite'));
+});
 
 it('validates 814 West Park Dr', function () {
     $result = spanishForkValidator()->validate(
@@ -37,7 +39,7 @@ it('validates 814 West Park Dr', function () {
 
     expect($result->matched())->toBeTrue();
     expect($result->address()->deliveryAddressLine())->toBe('814 S WEST PARK DR');
-})->skip(fn () => ! file_exists(dirname(__DIR__, 2).'/database/spanish-fork-addresses.sqlite'));
+});
 
 it('validates 814 W PARK DR', function () {
     $result = spanishForkValidator()->validate(
@@ -47,7 +49,7 @@ it('validates 814 W PARK DR', function () {
     expect($result->matched())->toBeTrue();
     expect($result->address()->streetName)->toContain('PARK');
     expect($result->address()->primaryNumber)->toBe('814');
-})->skip(fn () => ! file_exists(dirname(__DIR__, 2).'/database/spanish-fork-addresses.sqlite'));
+});
 
 it('does not rewrite 814 Main St into West Park', function () {
     $result = spanishForkValidator()->validate(
@@ -56,4 +58,4 @@ it('does not rewrite 814 Main St into West Park', function () {
 
     expect($result->matched())->toBeFalse();
     expect($result->address()->streetName)->not->toBe('WEST PARK');
-})->skip(fn () => ! file_exists(dirname(__DIR__, 2).'/database/spanish-fork-addresses.sqlite'));
+});

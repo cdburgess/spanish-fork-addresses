@@ -2,8 +2,28 @@
 
 namespace Cdburgess\SpanishForkAddresses\Tests\Support;
 
+use Cdburgess\SpanishForkAddresses\Support\GazetteerImporter;
+use RuntimeException;
+
 class AddressPointsCsv
 {
+    public static function import(array $rows): int
+    {
+        $path = tempnam(sys_get_temp_dir(), 'spanish-fork-fixture-');
+
+        if ($path === false) {
+            throw new RuntimeException('Unable to create a temporary address fixture.');
+        }
+
+        try {
+            self::write($path, $rows);
+
+            return app(GazetteerImporter::class)->import($path);
+        } finally {
+            unlink($path);
+        }
+    }
+
     public static function row(array $overrides = []): array
     {
         return array_replace([

@@ -12,27 +12,22 @@ composer require cdburgess/spanish-fork-addresses
 
 The service provider is auto-discovered by Laravel.
 
-Publish the config (optional):
+Publish the migration and create the table in your application's default database:
 
 ```bash
-php artisan vendor:publish --tag=spanish-fork-addresses-config
+php artisan vendor:publish --tag=spanish-fork-addresses-migrations
+php artisan migrate --force
 ```
 
-Publish a generated SQLite gazetteer (optional, after you have built one):
+The migration creates an empty `gis_addresses` table with the address fields and lookup indexes. It is not loaded automatically; publish it before running migrations. The package does not create or use a separate SQLite file.
+
+Populate the table using a Utah address points CSV export (not shipped with the package):
 
 ```bash
-php artisan vendor:publish --tag=spanish-fork-addresses-db
+php artisan spanish-fork:import /path/to/UtahAddressPoints.csv
 ```
 
-## Build the gazetteer
-
-Use a Utah address points CSV export (not shipped with the package). From the package root:
-
-```bash
-php bin/import-address-points.php /path/to/UtahAddressPoints.csv database/spanish-fork-addresses.sqlite
-```
-
-In a Laravel app after the package is installed:
+## Refresh GIS data
 
 ```bash
 php artisan spanish-fork:import /path/to/UtahAddressPoints.csv
@@ -40,19 +35,23 @@ php artisan spanish-fork:import /path/to/UtahAddressPoints.csv
 
 Only rows whose `Address System` is `SPANISH FORK` are imported (case-insensitive, ignoring surrounding whitespace). The `City` field is not used for filtering. DBF import is no longer supported.
 
-For the CSV in this checkout:
-
-```bash
-php bin/import-address-points.php UtahAddressPoints_2778281154463100711.csv database/spanish-fork-addresses.sqlite
-```
-
 Required headers are `Address System`, `Full Address`, `Address Number`, `Prefix Direction`, `Street Name`, `Street Type`, and `Suffix Direction`. The reader supports UTF-8 BOMs and quoted CSV fields. Rows with neither a full address nor a street name are skipped.
 
 Address components are imported directly, including optional `Address Number Suffix` and `Unit ID`. Optional `Utah Address Point ID`, `Structure`, and `Point Type` populate `location_id`, `is_built`, and `address_type`; missing metadata remains null. Optional `x`/`y` coordinates must be EPSG:3857 (Web Mercator) and are converted to longitude/latitude.
 
-When a new CSV export is available, rerun the same command. Each successful import replaces the gazetteer; a failed import preserves the existing database. You do not need a code change unless the CSV headers change.
+When a new CSV export is available, rerun the same command. Each successful import replaces all rows in `gis_addresses` in a transaction without recreating the table; a failed import preserves its previous data. An export with no eligible records successfully empties the table. Other application tables are not modified. You do not need a code change unless the CSV headers change.
 
-You can get Utah GIS data from: https://opendata.gis.utah.gov/ 
+Use a transactional database engine (such as InnoDB on MySQL). Read visibility and locking during a live refresh depend on your database's transaction isolation.
+
+You can get Utah GIS data from: https://opendata.gis.utah.gov/
+
+## Zero-downtime deployments and upgrading from SQLite
+
+For the initial upgrade, publish and run the migration, then import the CSV **before switching traffic to the new release**. The migration does not copy data from an old SQLite file; existing installations need a one-time CSV reimport. Keep the old SQLite file available while the old release still serves traffic.
+
+After that cutover, `gis_addresses` persists in the application's database across release-directory changes. Run normal pending migrations on later deployments, but do not run the import command on every deploy. Reimport only when updating GIS data.
+
+This is a breaking change from the SQLite-backed version: the standalone `bin/import-address-points.php` script, the `--database` import option, and the `spanish-fork-addresses-config` / `spanish-fork-addresses-db` publish tags have been removed. The old `spanish-fork-addresses.database` path setting is no longer read; you can remove its published config file.
 
 ## Usage
 
@@ -74,14 +73,17 @@ if ($result->matched()) {
 }
 ```
 
-Or construct the validator directly in tests / non-Laravel scripts:
+Or construct the validator directly with a Laravel database connection:
 
 ```php
 use Cdburgess\SpanishForkAddresses\SpanishForkValidator;
+use Illuminate\Support\Facades\DB;
 
-$validator = new SpanishForkValidator(__DIR__ . '/database/spanish-fork-addresses.sqlite');
+$validator = new SpanishForkValidator(DB::connection());
 $result = $validator->validate($address);
 ```
+
+`SpanishForkValidator` and `GazetteerImporter` now take an `Illuminate\Database\ConnectionInterface`, not a file path. For direct imports, use `app(GazetteerImporter::class)->import($csvPath)`; there is no output-path argument.
 
 ## What gets matched
 
@@ -111,16 +113,11 @@ The validator will not rewrite an address just because the house number exists o
 | `message()` | Short explanation |
 | `toArray()` | Full payload |
 
-## Config
+## Database
 
-```php
-// config/spanish-fork-addresses.php
-return [
-    'database' => database_path('spanish-fork-addresses.sqlite'),
-];
-```
+The validator and importer both use Laravel's default database connection and the fixed table name `gis_addresses`. Configure the connection in your application's normal database configuration; there are no package-specific database settings.
 
-If that file does not exist, the package falls back to `database/spanish-fork-addresses.sqlite` inside the package.
+An empty table returns an unmatched result. A missing migration or unavailable database surfaces a database error rather than being treated as an address mismatch. The import command reports errors and exits with a failure status.
 
 ## Testing
 
@@ -128,7 +125,7 @@ If that file does not exist, the package falls back to `database/spanish-fork-ad
 ./vendor/bin/pest
 ```
 
-Tests that need the gazetteer skip automatically when the SQLite file has not been generated.
+Tests use the package migration and deterministic CSV fixtures in an in-memory application database. No generated gazetteer file is needed.
 
 ## Limits
 

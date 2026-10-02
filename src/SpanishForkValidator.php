@@ -5,13 +5,13 @@ namespace Cdburgess\SpanishForkAddresses;
 use Cdburgess\AddressingStandards\Address;
 use Cdburgess\SpanishForkAddresses\Contracts\AddressValidator;
 use Cdburgess\SpanishForkAddresses\Support\StreetKey;
+use Illuminate\Database\ConnectionInterface;
 use InvalidArgumentException;
-use PDO;
 
 class SpanishForkValidator implements AddressValidator
 {
     public function __construct(
-        protected string $databasePath,
+        protected ConnectionInterface $connection,
     ) {}
 
     public function validate(Address $address): ValidationResult
@@ -19,15 +19,6 @@ class SpanishForkValidator implements AddressValidator
         if (! filled($address->primaryNumber) && ! filled($address->streetName)) {
             throw new InvalidArgumentException(
                 'SpanishForkValidator requires a standardized Address with a primary number or street name.'
-            );
-        }
-
-        if (! file_exists($this->databasePath)) {
-            return new ValidationResult(
-                matched: false,
-                address: $address,
-                confidence: 0.0,
-                message: "Gazetteer database not found at {$this->databasePath}.",
             );
         }
 
@@ -75,10 +66,6 @@ class SpanishForkValidator implements AddressValidator
      */
     protected function candidates(Address $address): array
     {
-        $pdo = new PDO('sqlite:'.$this->databasePath);
-        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-
         $inputNameKey = StreetKey::compact(
             $address->streetName,
             $address->postDirectional,
@@ -97,21 +84,18 @@ class SpanishForkValidator implements AddressValidator
             $address->suffix
         );
 
-        $sql = 'SELECT * FROM addresses WHERE 1=1';
-        $bindings = [];
+        $query = $this->connection->table('gis_addresses');
 
         if (filled($address->primaryNumber)) {
-            $sql .= ' AND house_number = :house_number';
-            $bindings['house_number'] = $address->primaryNumber;
+            $query->where('house_number', $address->primaryNumber);
         }
 
-        $statement = $pdo->prepare($sql);
-        $statement->execute($bindings);
-        $rows = $statement->fetchAll();
+        $rows = $query->get();
 
         $scored = [];
 
         foreach ($rows as $row) {
+            $row = (array) $row;
             $rowNameKey = $row['street_name_key'] ?: StreetKey::compact($row['street_name'] ?? '');
             $rowKey = $row['street_key'] ?: StreetKey::compact(
                 $row['pre_directional'] ?? '',

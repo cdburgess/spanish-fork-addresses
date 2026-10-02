@@ -4,27 +4,19 @@ namespace Cdburgess\SpanishForkAddresses;
 
 use Cdburgess\SpanishForkAddresses\Console\ImportAddressPointsCommand;
 use Cdburgess\SpanishForkAddresses\Contracts\AddressValidator;
+use Cdburgess\SpanishForkAddresses\Support\GazetteerImporter;
 use Illuminate\Support\ServiceProvider;
 
 class SpanishForkAddressesServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        $this->mergeConfigFrom(
-            __DIR__.'/../config/spanish-fork-addresses.php',
-            'spanish-fork-addresses'
-        );
-
-        $this->app->singleton(AddressValidator::class, function ($app) {
-            $configured = $app['config']->get('spanish-fork-addresses.database');
-            $fallback = __DIR__.'/../database/spanish-fork-addresses.sqlite';
-
-            $path = (is_string($configured) && file_exists($configured))
-                ? $configured
-                : $fallback;
-
-            return new SpanishForkValidator($path);
-        });
+        $this->app->singleton(AddressValidator::class, fn ($app) => new SpanishForkValidator(
+            $app['db']->connection()
+        ));
+        $this->app->singleton(GazetteerImporter::class, fn ($app) => new GazetteerImporter(
+            $app['db']->connection()
+        ));
     }
 
     public function boot(): void
@@ -34,16 +26,8 @@ class SpanishForkAddressesServiceProvider extends ServiceProvider
                 ImportAddressPointsCommand::class,
             ]);
             $this->publishes([
-                __DIR__.'/../config/spanish-fork-addresses.php' => config_path('spanish-fork-addresses.php'),
-            ], 'spanish-fork-addresses-config');
-
-            $database = __DIR__.'/../database/spanish-fork-addresses.sqlite';
-
-            if (file_exists($database)) {
-                $this->publishes([
-                    $database => database_path('spanish-fork-addresses.sqlite'),
-                ], 'spanish-fork-addresses-db');
-            }
+                __DIR__.'/../database/migrations/2026_10_02_000000_create_gis_addresses_table.php' => database_path('migrations/2026_10_02_000000_create_gis_addresses_table.php'),
+            ], 'spanish-fork-addresses-migrations');
         }
     }
 }

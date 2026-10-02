@@ -3,42 +3,24 @@
 namespace Cdburgess\SpanishForkAddresses\Support;
 
 use Cdburgess\AddressingStandards\Tables\StreetSuffixes;
+use Illuminate\Database\ConnectionInterface;
 use InvalidArgumentException;
-use PDO;
 
 class GazetteerImporter
 {
-    public function import(string $csvPath, string $databasePath): int
+    public function __construct(
+        protected ConnectionInterface $connection,
+    ) {}
+
+    public function import(string $csvPath): int
     {
         $reader = new CsvReader($csvPath, [
             'Address System', 'Full Address', 'Address Number',
             'Prefix Direction', 'Street Name', 'Street Type', 'Suffix Direction',
         ]);
 
-        $directory = dirname($databasePath);
-        if (! is_dir($directory) && ! mkdir($directory, 0755, true) && ! is_dir($directory)) {
-            throw new InvalidArgumentException("Unable to create directory: {$directory}");
-        }
-
-        $pdo = new PDO('sqlite:'.$databasePath);
-        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-
-        $pdo->beginTransaction();
-
-        try {
-            $this->createSchema($pdo);
-
-            $insert = $pdo->prepare('
-            INSERT INTO addresses (
-                house_number, pre_directional, street_name, suffix,
-                secondary_number, full_address, street_key, street_key_loose,
-                street_name_key, latitude, longitude, location_id, is_built, address_type
-            ) VALUES (
-                :house_number, :pre_directional, :street_name, :suffix,
-                :secondary_number, :full_address, :street_key, :street_key_loose,
-                :street_name_key, :latitude, :longitude, :location_id, :is_built, :address_type
-            )
-        ');
+        return $this->connection->transaction(function () use ($reader): int {
+            $this->connection->table('gis_addresses')->delete();
 
             $imported = 0;
 
@@ -62,7 +44,7 @@ class GazetteerImporter
                 $suffix = StreetSuffixes::standardize($type) ?: ($type !== '' ? $type : null);
                 [$latitude, $longitude] = $this->coordinates($row);
 
-                $insert->execute([
+                $this->connection->table('gis_addresses')->insert([
                     'house_number' => $number !== '' ? $number : null,
                     'pre_directional' => $pre !== '' ? $pre : null,
                     'street_name' => $streetName !== '' ? $streetName : null,
@@ -82,43 +64,8 @@ class GazetteerImporter
                 $imported++;
             }
 
-            $pdo->commit();
-
             return $imported;
-        } finally {
-            if ($pdo->inTransaction()) {
-                $pdo->rollBack();
-            }
-        }
-    }
-
-    protected function createSchema(PDO $pdo): void
-    {
-        $pdo->exec('DROP TABLE IF EXISTS addresses');
-        $pdo->exec('
-            CREATE TABLE addresses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                house_number TEXT,
-                pre_directional TEXT,
-                street_name TEXT,
-                suffix TEXT,
-                secondary_number TEXT,
-                full_address TEXT,
-                street_key TEXT,
-                street_key_loose TEXT,
-                street_name_key TEXT,
-                latitude REAL,
-                longitude REAL,
-                location_id TEXT,
-                is_built TEXT,
-                address_type TEXT
-            )
-        ');
-
-        $pdo->exec('CREATE INDEX addresses_house_number_index ON addresses (house_number)');
-        $pdo->exec('CREATE INDEX addresses_street_key_index ON addresses (street_key)');
-        $pdo->exec('CREATE INDEX addresses_street_key_loose_index ON addresses (street_key_loose)');
-        $pdo->exec('CREATE INDEX addresses_street_name_key_index ON addresses (street_name_key)');
+        });
     }
 
     /**

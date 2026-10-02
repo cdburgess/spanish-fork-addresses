@@ -5,13 +5,13 @@ use Cdburgess\SpanishForkAddresses\SpanishForkValidator;
 use Cdburgess\SpanishForkAddresses\Support\CsvReader;
 use Cdburgess\SpanishForkAddresses\Support\GazetteerImporter;
 use Cdburgess\SpanishForkAddresses\Tests\Support\AddressPointsCsv;
-use Symfony\Component\Process\Process;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 beforeEach(function () {
     $this->directory = sys_get_temp_dir().'/spanish-fork-csv-'.uniqid();
     mkdir($this->directory);
     $this->csv = $this->directory.'/addresses.csv';
-    $this->database = $this->directory.'/addresses.sqlite';
 });
 
 afterEach(function () {
@@ -67,9 +67,9 @@ it('filters by address system regardless of city and maps CSV fields', function 
         AddressPointsCsv::row(['Full Address' => '', 'Street Name' => '']),
     ], bom: true);
 
-    expect((new GazetteerImporter)->import($this->csv, $this->database))->toBe(1);
+    expect(app(GazetteerImporter::class)->import($this->csv))->toBe(1);
 
-    $row = (new PDO('sqlite:'.$this->database))->query('SELECT * FROM addresses')->fetch(PDO::FETCH_ASSOC);
+    $row = (array) DB::table('gis_addresses')->first();
 
     expect($row)->toMatchArray([
         'house_number' => '814A',
@@ -93,9 +93,9 @@ it('keeps absent metadata null and converts the coordinate origin', function () 
     $row = AddressPointsCsv::row(['x' => '0', 'y' => '0']);
     unset($row['Utah Address Point ID'], $row['Structure'], $row['Point Type'], $row['Unit ID']);
     AddressPointsCsv::write($this->csv, [$row]);
-    (new GazetteerImporter)->import($this->csv, $this->database);
+    app(GazetteerImporter::class)->import($this->csv);
 
-    $result = (new PDO('sqlite:'.$this->database))->query('SELECT * FROM addresses')->fetch(PDO::FETCH_ASSOC);
+    $result = (array) DB::table('gis_addresses')->first();
 
     expect($result)->toMatchArray([
         'latitude' => 0.0, 'longitude' => 0.0, 'location_id' => null,
@@ -111,8 +111,8 @@ it('preserves grid directionals and West Park matching without coordinates', fun
             'Street Name' => '800', 'Street Type' => '', 'Suffix Direction' => 'E',
         ]),
     ]);
-    (new GazetteerImporter)->import($this->csv, $this->database);
-    $validator = new SpanishForkValidator($this->database);
+    app(GazetteerImporter::class)->import($this->csv);
+    $validator = new SpanishForkValidator(DB::connection());
 
     foreach (['814 westpark drive', '814 W PARK DR', '80 south 800 east'] as $input) {
         $result = $validator->validate(Address::normalize([
@@ -127,27 +127,28 @@ it('preserves grid directionals and West Park matching without coordinates', fun
     expect($validator->validate(Address::normalize([
         'street_line' => '814 Main St', 'city' => 'Spanish Fork', 'state' => 'UT',
     ]))->matched())->toBeFalse();
-    $row = (new PDO('sqlite:'.$this->database))->query("SELECT * FROM addresses WHERE house_number = '814'")->fetch(PDO::FETCH_ASSOC);
+    $row = (array) DB::table('gis_addresses')->where('house_number', '814')->first();
     expect($row['latitude'])->toBeNull();
     expect($row['longitude'])->toBeNull();
 });
 
 it('replaces old rows on repeated imports', function () {
-    $importer = new GazetteerImporter;
+    $importer = app(GazetteerImporter::class);
     AddressPointsCsv::write($this->csv, [AddressPointsCsv::row()]);
-    $importer->import($this->csv, $this->database);
+    $importer->import($this->csv);
     AddressPointsCsv::write($this->csv, [AddressPointsCsv::row(['Address Number' => '900'])]);
 
-    expect($importer->import($this->csv, $this->database))->toBe(1);
-    $pdo = new PDO('sqlite:'.$this->database);
-    expect($pdo->query('SELECT count(*) FROM addresses')->fetchColumn())->toBe(1);
-    expect($pdo->query('SELECT house_number FROM addresses')->fetchColumn())->toBe('900');
+    expect($importer->import($this->csv))->toBe(1);
+    expect(DB::table('gis_addresses')->count())->toBe(1);
+    expect(DB::table('gis_addresses')->value('house_number'))->toBe('900');
 });
 
-it('rolls back schema and rows when a CSV import fails', function (string $failure) {
-    $importer = new GazetteerImporter;
+it('preserves schema and rolls back rows when a CSV import fails', function (string $failure) {
+    $importer = app(GazetteerImporter::class);
     AddressPointsCsv::write($this->csv, [AddressPointsCsv::row()]);
-    $importer->import($this->csv, $this->database);
+    $importer->import($this->csv);
+    $before = DB::table('gis_addresses')->get()->toArray();
+    $indexes = Schema::getIndexes('gis_addresses');
     AddressPointsCsv::write($this->csv, [
         AddressPointsCsv::row(['Address Number' => '900']),
         AddressPointsCsv::row(['Address Number' => '901', 'x' => $failure === 'coordinate' ? 'invalid' : '0']),
@@ -159,28 +160,31 @@ it('rolls back schema and rows when a CSV import fails', function (string $failu
         file_put_contents($this->csv, "City\nSPANISH FORK\n");
     }
 
-    expect(fn () => $importer->import($this->csv, $this->database))->toThrow(InvalidArgumentException::class);
-    $pdo = new PDO('sqlite:'.$this->database);
-    expect($pdo->query('SELECT count(*) FROM addresses')->fetchColumn())->toBe(1);
-    expect($pdo->query('SELECT house_number FROM addresses')->fetchColumn())->toBe('814');
+    expect(fn () => $importer->import($this->csv))->toThrow(InvalidArgumentException::class);
+    expect(DB::table('gis_addresses')->get()->toArray())->toEqual($before);
+    expect(Schema::getIndexes('gis_addresses'))->toBe($indexes);
 })->with(['coordinate', 'width', 'header']);
 
-it('imports CSV through the standalone entry point and reports errors', function () {
+it('preserves unrelated application tables and lookup indexes during replacement', function () {
+    Schema::create('addresses', function ($table) {
+        $table->string('name');
+    });
+    DB::table('addresses')->insert(['name' => 'Application record']);
+    $indexes = Schema::getIndexes('gis_addresses');
     AddressPointsCsv::write($this->csv, [AddressPointsCsv::row()]);
-    $script = dirname(__DIR__, 2).'/bin/import-address-points.php';
-    $process = new Process([PHP_BINARY, $script, $this->csv, $this->database]);
-    $process->run();
+    app(GazetteerImporter::class)->import($this->csv);
+    app(GazetteerImporter::class)->import($this->csv);
 
-    expect($process->getExitCode())->toBe(0);
-    expect($process->getOutput())->toContain('Imported 1 addresses');
+    expect(DB::table('addresses')->value('name'))->toBe('Application record');
+    expect(Schema::getIndexes('gis_addresses'))->toBe($indexes);
+});
 
-    $process = new Process([PHP_BINARY, $script, $this->directory.'/missing.csv', $this->database]);
-    $process->run();
-    expect($process->getExitCode())->toBe(1);
-    expect($process->getErrorOutput())->toContain('CSV file is not readable');
+it('replaces the table with no rows when an export has no eligible addresses', function () {
+    $importer = app(GazetteerImporter::class);
+    AddressPointsCsv::write($this->csv, [AddressPointsCsv::row()]);
+    $importer->import($this->csv);
+    AddressPointsCsv::write($this->csv, [AddressPointsCsv::row(['Address System' => 'SALEM'])]);
 
-    $process = new Process([PHP_BINARY, $script, '--help']);
-    $process->run();
-    expect($process->getExitCode())->toBe(0);
-    expect($process->getOutput())->toContain('UtahAddressPoints.csv');
+    expect($importer->import($this->csv))->toBe(0);
+    expect(DB::table('gis_addresses')->count())->toBe(0);
 });
